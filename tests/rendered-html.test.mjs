@@ -37,6 +37,8 @@ test("removes starter-only assets and keeps deployment configuration intact", as
     readFile(new URL(".openai/hosting.json", root), "utf8"),
   ]);
   assert.match(page, /from "\.\/game\/engine"/);
+  assert.match(page, /addEventListener\("visibilitychange", onVisibility\)/);
+  assert.doesNotMatch(page, /addEventListener\("blur", autoPause\)/);
   assert.match(layout, /Blockline — Professional Tetris/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   const hostingConfig = JSON.parse(hosting);

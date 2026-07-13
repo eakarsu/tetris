@@ -422,11 +422,9 @@ export default function Home() {
     };
 
     window.addEventListener("keydown", onKeyDown, { passive: false });
-    window.addEventListener("blur", autoPause);
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("blur", autoPause);
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [
