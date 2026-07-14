@@ -28,6 +28,8 @@ Open `http://localhost:3000` on the development machine. A phone on the same Wi-
 
 Keyboard movement uses owned DAS/ARR timing for consistent behavior across computers. Mobile controls are pointer-first, support simultaneous movement and soft drop, and automatically release when the page loses focus.
 
+On mobile, tapping **Play Now** unlocks the browser audio engine and starts an audible countdown. Turning SFX back on also plays a confirmation cue.
+
 ## Quality checks
 
 ```bash

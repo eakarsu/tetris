@@ -43,6 +43,10 @@ test("removes starter-only assets and keeps deployment configuration intact", as
   assert.doesNotMatch(page, /addEventListener\("blur", autoPause\)/);
   assert.match(page, /const closeHelp = useCallback/);
   assert.match(page, /role="group" aria-label=\{boardLabel\}/);
+  assert.match(page, /webkitAudioContext/);
+  assert.match(page, /void playSound\("countdown"\)/);
+  assert.equal((page.match(/onClick=\{toggleSound\}/g) ?? []).length, 2);
+  assert.doesNotMatch(page, /void context\.resume\(\)/);
   assert.match(layout, /Blockline — Professional Tetris/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   const hostingConfig = JSON.parse(hosting);

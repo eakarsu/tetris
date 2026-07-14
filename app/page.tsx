@@ -32,6 +32,7 @@ import {
   type GameState,
   type Tetromino,
 } from "./game/engine";
+import { resumeAudioContext } from "./game/audio";
 import { createRepeatController } from "./game/input-repeat";
 import {
   countdownDelay,
@@ -44,9 +45,13 @@ const STORAGE_KEY = "blockline:tetris:v1";
 const LOCK_DELAY = 500;
 const MAX_LOCK_RESETS = 15;
 
-type SoundName = "move" | "rotate" | "drop" | "clear" | "level" | "over";
+type SoundName = "move" | "rotate" | "drop" | "clear" | "level" | "over" | "countdown" | "start";
 type CellView = { type: Tetromino | null; mode: "empty" | "locked" | "ghost" | "active" };
 type Callout = { id: number; text: string };
+type AudioContextConstructor = new (contextOptions?: AudioContextOptions) => AudioContext;
+type WebKitAudioWindow = Window & typeof globalThis & {
+  webkitAudioContext?: AudioContextConstructor;
+};
 
 function MiniPiece({ type, compact = false }: { type: Tetromino | null; compact?: boolean }) {
   const occupied = new Set(
@@ -184,6 +189,8 @@ export default function Home() {
   const gameRef = useRef(game);
   const randomRef = useRef<() => number>(seededRandom(0x7e7a15));
   const audioRef = useRef<AudioContext | null>(null);
+  const audioPrimedRef = useRef(false);
+  const soundEnabledRef = useRef(true);
   const gravityElapsedRef = useRef(0);
   const lockElapsedRef = useRef(0);
   const lockResetsRef = useRef(0);
@@ -218,41 +225,101 @@ export default function Home() {
     if (next.status === "over") paintClock();
   }, [paintClock]);
 
-  const playSound = useCallback((name: SoundName) => {
-    if (!soundOn || typeof window === "undefined") return;
-    const AudioContextClass = window.AudioContext;
-    if (!AudioContextClass) return;
-    const context = audioRef.current ?? new AudioContextClass();
-    audioRef.current = context;
-    if (context.state === "suspended") void context.resume();
+  const getAudioContext = useCallback((): AudioContext | null => {
+    if (typeof window === "undefined") return null;
+    const AudioContextClass: AudioContextConstructor | undefined = window.AudioContext
+      ?? (window as WebKitAudioWindow).webkitAudioContext;
+    if (!AudioContextClass) return null;
 
-    const oscillator = context.createOscillator();
-    const gain = context.createGain();
-    const settings: Record<SoundName, [number, number, OscillatorType]> = {
-      move: [150, 0.028, "square"],
-      rotate: [260, 0.045, "triangle"],
-      drop: [92, 0.085, "square"],
-      clear: [520, 0.16, "sine"],
-      level: [720, 0.2, "triangle"],
-      over: [110, 0.28, "sawtooth"],
+    if (!audioRef.current || audioRef.current.state === "closed") {
+      try {
+        audioRef.current = new AudioContextClass();
+      } catch {
+        return null;
+      }
+      audioPrimedRef.current = false;
+    }
+    const context = audioRef.current;
+
+    if (!audioPrimedRef.current) {
+      try {
+        const buffer = context.createBuffer(1, 1, context.sampleRate);
+        const source = context.createBufferSource();
+        source.buffer = buffer;
+        source.connect(context.destination);
+        source.onended = () => source.disconnect();
+        source.start();
+        audioPrimedRef.current = true;
+      } catch {
+        // The resume path below remains sufficient on modern mobile browsers.
+      }
+    }
+    return context;
+  }, []);
+
+  const unlockAudio = useCallback(async (): Promise<AudioContext | null> => {
+    const context = getAudioContext();
+    if (!context) return null;
+    if (context.state === "running") return context;
+    return await resumeAudioContext(context) ? context : null;
+  }, [getAudioContext]);
+
+  const scheduleSound = useCallback((context: AudioContext, name: SoundName): boolean => {
+    const settings: Record<SoundName, [number, number, OscillatorType, number]> = {
+      move: [170, 0.04, "square", 0.07],
+      rotate: [290, 0.06, "triangle", 0.085],
+      drop: [98, 0.11, "square", 0.1],
+      clear: [520, 0.18, "sine", 0.1],
+      level: [720, 0.22, "triangle", 0.11],
+      over: [120, 0.3, "sawtooth", 0.085],
+      countdown: [340, 0.08, "sine", 0.09],
+      start: [520, 0.18, "triangle", 0.11],
     };
-    const [frequency, duration, type] = settings[name];
-    oscillator.type = type;
-    oscillator.frequency.setValueAtTime(frequency, context.currentTime);
-    if (name === "clear" || name === "level") {
-      oscillator.frequency.exponentialRampToValueAtTime(frequency * 1.7, context.currentTime + duration);
+
+    try {
+      const [frequency, duration, type, volume] = settings[name];
+      const now = context.currentTime;
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = type;
+      oscillator.frequency.setValueAtTime(frequency, now);
+      if (name === "clear" || name === "level" || name === "start") {
+        oscillator.frequency.exponentialRampToValueAtTime(frequency * 1.7, now + duration);
+      }
+      if (name === "over") {
+        oscillator.frequency.exponentialRampToValueAtTime(55, now + duration);
+      }
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(volume, now + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.onended = () => {
+        oscillator.disconnect();
+        gain.disconnect();
+      };
+      oscillator.start(now);
+      oscillator.stop(now + duration + 0.02);
+      return true;
+    } catch {
+      return false;
     }
-    if (name === "over") {
-      oscillator.frequency.exponentialRampToValueAtTime(55, context.currentTime + duration);
-    }
-    gain.gain.setValueAtTime(0.0001, context.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.055, context.currentTime + 0.012);
-    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + duration);
-    oscillator.connect(gain);
-    gain.connect(context.destination);
-    oscillator.start();
-    oscillator.stop(context.currentTime + duration + 0.02);
-  }, [soundOn]);
+  }, []);
+
+  const playSound = useCallback(async (name: SoundName, force = false): Promise<boolean> => {
+    if (!soundEnabledRef.current && !force) return false;
+    const context = await unlockAudio();
+    if (!context || (!soundEnabledRef.current && !force)) return false;
+    return scheduleSound(context, name);
+  }, [scheduleSound, unlockAudio]);
+
+  const toggleSound = useCallback(() => {
+    const next = !soundEnabledRef.current;
+    soundEnabledRef.current = next;
+    setSoundOn(next);
+    setAnnouncement(next ? "Sound effects on" : "Sound effects off");
+    if (next) void playSound("start", true);
+  }, [playSound]);
 
   const resetTiming = useCallback(() => {
     gravityElapsedRef.current = 0;
@@ -298,6 +365,7 @@ export default function Home() {
 
   const beginGame = useCallback(() => {
     if (countdownRef.current !== null) return;
+    void playSound("countdown");
     const seed = (Date.now() ^ Math.floor(performance.now() * 1000)) >>> 0;
     randomRef.current = seededRandom(seed);
     releaseHeldControls();
@@ -310,7 +378,7 @@ export default function Home() {
     countdownRef.current = 3;
     setCountdown(3);
     setAnnouncement("Starting in 3");
-  }, [clearCallout, releaseHeldControls, replaceGame, resetTiming]);
+  }, [clearCallout, playSound, releaseHeldControls, replaceGame, resetTiming]);
 
   const manipulate = useCallback((transform: (current: GameState) => GameState, sound: SoundName) => {
     const current = gameRef.current;
@@ -397,6 +465,10 @@ export default function Home() {
   }, [game]);
 
   useEffect(() => {
+    soundEnabledRef.current = soundOn;
+  }, [soundOn]);
+
+  useEffect(() => {
     if (!helpOpen) return;
     const frame = window.requestAnimationFrame(() => helpCloseButtonRef.current?.focus());
     return () => window.cancelAnimationFrame(frame);
@@ -411,7 +483,10 @@ export default function Home() {
           if (stored.version === 1 && Number.isSafeInteger(stored.best) && (stored.best ?? 0) >= 0) {
             setBestScore(Math.min(stored.best ?? 0, 999_999_999));
           }
-          if (stored.version === 1 && typeof stored.sound === "boolean") setSoundOn(stored.sound);
+          if (stored.version === 1 && typeof stored.sound === "boolean") {
+            soundEnabledRef.current = stored.sound;
+            setSoundOn(stored.sound);
+          }
         }
       } catch {
         // Local preferences are optional; gameplay remains fully available.
@@ -437,6 +512,7 @@ export default function Home() {
     const timer = window.setTimeout(() => {
       const nextCount = nextCountdownStep(countdown);
       if (nextCount !== null) {
+        void playSound(nextCount === 0 ? "start" : "countdown");
         setAnnouncement(nextCount === 0 ? "Go" : `Starting in ${nextCount}`);
         setCountdown(nextCount);
         return;
@@ -450,7 +526,7 @@ export default function Home() {
     }, countdownDelay(countdown));
 
     return () => window.clearTimeout(timer);
-  }, [countdown, replaceGame]);
+  }, [countdown, playSound, replaceGame]);
 
   useEffect(() => {
     const previous = previousEventRef.current;
@@ -593,7 +669,7 @@ export default function Home() {
       if (event.repeat && (oneShotCodes.has(event.code) || repeatCodes.has(event.code))) return;
 
       if (event.code === "KeyM") {
-        setSoundOn((value) => !value);
+        toggleSound();
         return;
       }
       if (event.code === "Enter" && (gameRef.current.status === "ready" || gameRef.current.status === "over")) {
@@ -691,11 +767,16 @@ export default function Home() {
     rotateClockwise,
     rotateCounterClockwise,
     stopRepeat,
+    toggleSound,
   ]);
 
   useEffect(() => () => {
     releaseHeldControls();
     if (calloutTimerRef.current) clearTimeout(calloutTimerRef.current);
+    const context = audioRef.current;
+    audioRef.current = null;
+    audioPrimedRef.current = false;
+    if (context && context.state !== "closed") void context.close().catch(() => {});
   }, [releaseHeldControls]);
 
   const cells = useMemo<CellView[]>(() => {
@@ -765,7 +846,7 @@ export default function Home() {
           <button
             type="button"
             className={`icon-button${soundOn ? " is-active" : ""}`}
-            onClick={() => setSoundOn((value) => !value)}
+            onClick={toggleSound}
             aria-label={soundOn ? "Mute sound" : "Enable sound"}
             aria-pressed={soundOn}
           >
@@ -978,7 +1059,7 @@ export default function Home() {
             <button
               type="button"
               className="help-setting"
-              onClick={() => setSoundOn((value) => !value)}
+              onClick={toggleSound}
               aria-pressed={soundOn}
             >
               <span>Sound effects</span><strong>{soundOn ? "On" : "Off"}</strong>
