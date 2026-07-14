@@ -70,6 +70,7 @@ test("ghost position matches hard-drop lock position and awards drop points", ()
   const landing = ghostY(prepared);
   const dropped = hardDrop(prepared, seededRandom(4));
   assert.equal(dropped.score, (landing - active.y) * 2);
+  assert.equal(dropped.pieces, 1);
   for (let x = 3; x <= 6; x += 1) assert.equal(dropped.board[landing + 1][x], "I");
 });
 
@@ -120,6 +121,36 @@ test("a single line scores correctly and advances line totals", () => {
   assert.equal(locked.score, 100);
   assert.equal(locked.level, 1);
   assert.equal(locked.lastClear, "SINGLE");
+  assert.equal(locked.pieces, 1);
+});
+
+test("piece telemetry changes only when a tetromino locks", () => {
+  const random = seededRandom(11);
+  const initial = createGame(random, "playing");
+  assert.equal(initial.pieces, 0);
+  assert.equal(movePiece(initial, 1).pieces, 0);
+  assert.equal(softDrop(initial).pieces, 0);
+  assert.equal(rotatePiece(initial, 1).pieces, 0);
+  assert.equal(holdPiece(initial, random).pieces, 0);
+
+  const firstLock = hardDrop(initial, random);
+  assert.equal(firstLock.pieces, 1);
+  const secondLock = hardDrop(firstLock, random);
+  assert.equal(secondLock.pieces, 2);
+
+  const paused = { ...firstLock, status: "paused" };
+  assert.strictEqual(hardDrop(paused, random), paused);
+  assert.equal(paused.pieces, 1);
+});
+
+test("a terminal top-out lock still counts as a placed piece", () => {
+  const state = createGame(seededRandom(12), "playing");
+  const toppedOut = lockPiece({
+    ...state,
+    active: { type: "O", rotation: 0, x: 3, y: 0 },
+  }, seededRandom(13));
+  assert.equal(toppedOut.status, "over");
+  assert.equal(toppedOut.pieces, 1);
 });
 
 test("pause transitions are reversible and ignored outside an active run", () => {

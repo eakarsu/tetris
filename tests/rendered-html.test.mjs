@@ -38,7 +38,11 @@ test("removes starter-only assets and keeps deployment configuration intact", as
   ]);
   assert.match(page, /from "\.\/game\/engine"/);
   assert.match(page, /addEventListener\("visibilitychange", onVisibility\)/);
+  assert.match(page, /addEventListener\("keyup", onKeyUp\)/);
+  assert.match(page, /addEventListener\("blur", releaseHeldControls\)/);
   assert.doesNotMatch(page, /addEventListener\("blur", autoPause\)/);
+  assert.match(page, /const closeHelp = useCallback/);
+  assert.match(page, /role="group" aria-label=\{boardLabel\}/);
   assert.match(layout, /Blockline — Professional Tetris/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   const hostingConfig = JSON.parse(hosting);

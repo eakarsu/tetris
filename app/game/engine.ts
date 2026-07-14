@@ -25,6 +25,7 @@ export type GameState = {
   hold: Tetromino | null;
   canHold: boolean;
   score: number;
+  pieces: number;
   lines: number;
   level: number;
   combo: number;
@@ -177,6 +178,7 @@ export function createGame(
     hold: null,
     canHold: true,
     score: 0,
+    pieces: 0,
     lines: 0,
     level: 1,
     combo: -1,
@@ -352,6 +354,7 @@ export function lockPiece(
     board: result.board,
     active: null,
     score: state.score + clearScore + comboScore,
+    pieces: state.pieces + 1,
     lines,
     level,
     combo,
