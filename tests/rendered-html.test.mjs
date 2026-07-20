@@ -42,7 +42,9 @@ test("removes starter-only assets and keeps deployment configuration intact", as
   assert.match(page, /addEventListener\("blur", releaseHeldControls\)/);
   assert.doesNotMatch(page, /addEventListener\("blur", autoPause\)/);
   assert.match(page, /const closeHelp = useCallback/);
-  assert.match(page, /role="group" aria-label=\{boardLabel\}/);
+  assert.match(page, /role="group"[\s\S]*?aria-label=\{boardLabel\}[\s\S]*?data-status=\{game\.status\}/);
+  assert.match(page, /CONTROL_ACTIONS\.map/);
+  assert.match(page, /type="range"/);
   assert.match(page, /webkitAudioContext/);
   assert.match(page, /void playSound\("countdown"\)/);
   assert.equal((page.match(/onClick=\{toggleSound\}/g) ?? []).length, 2);

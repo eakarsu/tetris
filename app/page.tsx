@@ -33,6 +33,18 @@ import {
   type Tetromino,
 } from "./game/engine";
 import { resumeAudioContext } from "./game/audio";
+import {
+  CONTROL_ACTIONS,
+  CONTROL_LABELS,
+  DEFAULT_BINDINGS,
+  actionForCode,
+  clampVolume,
+  displayCode,
+  normalizeBindings,
+  rebindControl,
+  type ControlAction,
+  type ControlBindings,
+} from "./game/controls";
 import { createRepeatController } from "./game/input-repeat";
 import {
   countdownDelay,
@@ -180,6 +192,10 @@ export default function Home() {
   const [game, setGame] = useState<GameState>(() => createGame(seededRandom(0x7e7a15)));
   const [bestScore, setBestScore] = useState(0);
   const [soundOn, setSoundOn] = useState(true);
+  const [volume, setVolume] = useState(0.7);
+  const [bindings, setBindings] = useState<ControlBindings>(() => ({ ...DEFAULT_BINDINGS }));
+  const [remappingAction, setRemappingAction] = useState<ControlAction | null>(null);
+  const [preferencesReady, setPreferencesReady] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [announcement, setAnnouncement] = useState("Game ready");
   const [countdown, setCountdown] = useState<number | null>(null);
@@ -191,6 +207,7 @@ export default function Home() {
   const audioRef = useRef<AudioContext | null>(null);
   const audioPrimedRef = useRef(false);
   const soundEnabledRef = useRef(true);
+  const volumeRef = useRef(0.7);
   const gravityElapsedRef = useRef(0);
   const lockElapsedRef = useRef(0);
   const lockResetsRef = useRef(0);
@@ -207,7 +224,6 @@ export default function Home() {
   const helpDialogRef = useRef<HTMLElement | null>(null);
   const helpCloseButtonRef = useRef<HTMLButtonElement | null>(null);
   const helpOpenerRef = useRef<HTMLElement | null>(null);
-  const storageReadyRef = useRef(false);
   const previousEventRef = useRef({
     clearSerial: game.clearSerial,
     level: game.level,
@@ -290,7 +306,7 @@ export default function Home() {
         oscillator.frequency.exponentialRampToValueAtTime(55, now + duration);
       }
       gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.exponentialRampToValueAtTime(volume, now + 0.012);
+      gain.gain.exponentialRampToValueAtTime(volume * volumeRef.current, now + 0.012);
       gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
       oscillator.connect(gain);
       gain.connect(context.destination);
@@ -320,6 +336,19 @@ export default function Home() {
     setAnnouncement(next ? "Sound effects on" : "Sound effects off");
     if (next) void playSound("start", true);
   }, [playSound]);
+
+  const updateVolume = useCallback((nextValue: number) => {
+    const next = clampVolume(nextValue);
+    volumeRef.current = next;
+    setVolume(next);
+    setAnnouncement(`Sound volume ${Math.round(next * 100)} percent`);
+  }, []);
+
+  const resetBindings = useCallback(() => {
+    setBindings({ ...DEFAULT_BINDINGS });
+    setRemappingAction(null);
+    setAnnouncement("Keyboard controls restored to defaults");
+  }, []);
 
   const resetTiming = useCallback(() => {
     gravityElapsedRef.current = 0;
@@ -446,6 +475,7 @@ export default function Home() {
 
   const closeHelp = useCallback(() => {
     const opener = helpOpenerRef.current;
+    setRemappingAction(null);
     setHelpOpen(false);
     const shouldResume = helpPausedGameRef.current
       && !helpHiddenWhileOpenRef.current
@@ -469,6 +499,10 @@ export default function Home() {
   }, [soundOn]);
 
   useEffect(() => {
+    volumeRef.current = volume;
+  }, [volume]);
+
+  useEffect(() => {
     if (!helpOpen) return;
     const frame = window.requestAnimationFrame(() => helpCloseButtonRef.current?.focus());
     return () => window.cancelAnimationFrame(frame);
@@ -479,31 +513,37 @@ export default function Home() {
       try {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (raw) {
-          const stored = JSON.parse(raw) as { version?: number; best?: number; sound?: boolean };
-          if (stored.version === 1 && Number.isSafeInteger(stored.best) && (stored.best ?? 0) >= 0) {
+          const stored = JSON.parse(raw) as { version?: number; best?: number; sound?: boolean; volume?: number; bindings?: unknown };
+          if ((stored.version === 1 || stored.version === 2) && Number.isSafeInteger(stored.best) && (stored.best ?? 0) >= 0) {
             setBestScore(Math.min(stored.best ?? 0, 999_999_999));
           }
-          if (stored.version === 1 && typeof stored.sound === "boolean") {
+          if ((stored.version === 1 || stored.version === 2) && typeof stored.sound === "boolean") {
             soundEnabledRef.current = stored.sound;
             setSoundOn(stored.sound);
+          }
+          if (stored.version === 2) {
+            const storedVolume = clampVolume(stored.volume);
+            volumeRef.current = storedVolume;
+            setVolume(storedVolume);
+            setBindings(normalizeBindings(stored.bindings));
           }
         }
       } catch {
         // Local preferences are optional; gameplay remains fully available.
       }
-      storageReadyRef.current = true;
+      setPreferencesReady(true);
     }, 0);
     return () => window.clearTimeout(loadPreferences);
   }, []);
 
   useEffect(() => {
-    if (!storageReadyRef.current) return;
+    if (!preferencesReady) return;
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, best: bestScore, sound: soundOn }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 2, best: bestScore, sound: soundOn, volume, bindings }));
     } catch {
       // Storage may be disabled or full; no gameplay behavior depends on it.
     }
-  }, [bestScore, soundOn]);
+  }, [bestScore, bindings, preferencesReady, soundOn, volume]);
 
   useEffect(() => {
     countdownRef.current = countdown;
@@ -614,20 +654,13 @@ export default function Home() {
       return element?.matches("button, input, textarea, select, a, [contenteditable='true']") ?? false;
     };
 
-    const controlCodes = new Set([
-      "ArrowLeft", "ArrowRight", "ArrowDown", "ArrowUp", "Space", "KeyX", "KeyZ",
-      "KeyC", "ShiftLeft", "ShiftRight",
-    ]);
-    const oneShotCodes = new Set([
-      "Space", "ArrowUp", "KeyX", "KeyZ", "KeyC", "ShiftLeft", "ShiftRight",
-      "KeyP", "Escape", "Enter", "KeyR", "KeyM",
-    ]);
-    const repeatCodes = new Set(["ArrowLeft", "ArrowRight", "ArrowDown"]);
+    const controlCodes = new Set([...Object.values(bindings), "Escape", "Enter", "KeyR"]);
+    const repeatActions = new Set<ControlAction>(["moveLeft", "moveRight", "softDrop"]);
 
-    const startHorizontal = (code: "ArrowLeft" | "ArrowRight") => {
+    const startHorizontal = (action: "moveLeft" | "moveRight", code: string) => {
       if (heldKeysRef.current.has(code)) return;
       heldKeysRef.current.add(code);
-      if (code === "ArrowLeft") {
+      if (action === "moveLeft") {
         stopRepeat("key-right");
         beginRepeat("key-left", moveLeft);
       } else {
@@ -638,6 +671,24 @@ export default function Home() {
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (helpOpen) {
+        if (remappingAction) {
+          event.preventDefault();
+          if (event.code === "Escape") {
+            setRemappingAction(null);
+            setAnnouncement("Keyboard remapping cancelled");
+            return;
+          }
+          if (event.repeat) return;
+          const result = rebindControl(bindings, remappingAction, event.code);
+          if (result.error) {
+            setAnnouncement(result.error);
+            return;
+          }
+          setBindings(result.bindings);
+          setAnnouncement(`${CONTROL_LABELS[remappingAction]} changed to ${displayCode(event.code)}`);
+          setRemappingAction(null);
+          return;
+        }
         if (event.code === "Tab") {
           const dialog = helpDialogRef.current;
           const focusable = dialog
@@ -666,9 +717,10 @@ export default function Home() {
       }
       if (isInteractiveTarget(event.target)) return;
       if (controlCodes.has(event.code)) event.preventDefault();
-      if (event.repeat && (oneShotCodes.has(event.code) || repeatCodes.has(event.code))) return;
+      const action = actionForCode(bindings, event.code);
+      if (event.repeat && action) return;
 
-      if (event.code === "KeyM") {
+      if (action === "sound") {
         toggleSound();
         return;
       }
@@ -682,7 +734,7 @@ export default function Home() {
         beginGame();
         return;
       }
-      if (event.code === "KeyP" || event.code === "Escape") {
+      if (action === "pause" || event.code === "Escape") {
         if (gameRef.current.status === "playing" || gameRef.current.status === "paused") {
           event.preventDefault();
           pauseNow();
@@ -691,33 +743,35 @@ export default function Home() {
       }
       if (gameRef.current.status !== "playing") return;
 
-      if (event.code === "ArrowLeft") startHorizontal("ArrowLeft");
-      else if (event.code === "ArrowRight") startHorizontal("ArrowRight");
-      else if (event.code === "ArrowDown") {
+      if (action === "moveLeft") startHorizontal("moveLeft", event.code);
+      else if (action === "moveRight") startHorizontal("moveRight", event.code);
+      else if (action === "softDrop") {
         if (!heldKeysRef.current.has(event.code)) {
           heldKeysRef.current.add(event.code);
           beginRepeat("key-down", moveDown);
         }
       }
-      else if (event.code === "ArrowUp" || event.code === "KeyX") rotateClockwise();
-      else if (event.code === "KeyZ") rotateCounterClockwise();
-      else if (event.code === "Space") dropNow();
-      else if (event.code === "KeyC" || event.code === "ShiftLeft" || event.code === "ShiftRight") holdNow();
+      else if (action === "rotateClockwise") rotateClockwise();
+      else if (action === "rotateCounterClockwise") rotateCounterClockwise();
+      else if (action === "hardDrop") dropNow();
+      else if (action === "hold") holdNow();
     };
 
     const onKeyUp = (event: KeyboardEvent) => {
-      if (!repeatCodes.has(event.code)) return;
+      const action = actionForCode(bindings, event.code);
+      if (!action || !repeatActions.has(action)) return;
       heldKeysRef.current.delete(event.code);
-      if (event.code === "ArrowDown") {
+      if (action === "softDrop") {
         stopRepeat("key-down");
         return;
       }
 
-      const releasedLeft = event.code === "ArrowLeft";
+      const releasedLeft = action === "moveLeft";
       stopRepeat(releasedLeft ? "key-left" : "key-right");
-      const opposite = releasedLeft ? "ArrowRight" : "ArrowLeft";
-      if (gameRef.current.status === "playing" && heldKeysRef.current.has(opposite)) {
-        if (opposite === "ArrowLeft") beginRepeat("key-left", moveLeft);
+      const oppositeAction = releasedLeft ? "moveRight" : "moveLeft";
+      const oppositeCode = bindings[oppositeAction];
+      if (gameRef.current.status === "playing" && heldKeysRef.current.has(oppositeCode)) {
+        if (oppositeAction === "moveLeft") beginRepeat("key-left", moveLeft);
         else beginRepeat("key-right", moveRight);
       }
     };
@@ -752,6 +806,7 @@ export default function Home() {
   }, [
     beginRepeat,
     beginGame,
+    bindings,
     cancelCountdown,
     closeHelp,
     dropNow,
@@ -763,6 +818,7 @@ export default function Home() {
     paintClock,
     pauseNow,
     releaseHeldControls,
+    remappingAction,
     replaceGame,
     rotateClockwise,
     rotateCounterClockwise,
@@ -815,10 +871,10 @@ export default function Home() {
         : game.status === "over"
           ? "Run complete"
           : "System ready";
-  const boardLabel = `Tetris board. Score ${game.score}. Level ${game.level}. ${game.lines} lines. ${game.pieces} pieces. Time ${runTime}. ${game.status}.`;
+  const boardLabel = `Tetris board. Score ${game.score}. Level ${game.level}. ${game.lines} lines. ${game.pieces} pieces. Time ${runTime}. Status ${game.status}. Active piece ${game.active?.type ?? "none"}. Hold ${game.hold ?? "empty"}. Next ${game.queue[0] ?? "empty"}.`;
 
   return (
-    <main className="app-shell">
+    <main className="app-shell" data-client-ready={preferencesReady}>
       <div className="ambient ambient--cyan" />
       <div className="ambient ambient--violet" />
 
@@ -877,7 +933,7 @@ export default function Home() {
           <section className="panel hold-panel">
             <div className="panel-heading">
               <span>Hold</span>
-              <Keycap>C</Keycap>
+              <Keycap>{displayCode(bindings.hold)}</Keycap>
             </div>
             <div className={`preview-well${game.canHold ? "" : " is-locked"}`}>
               <MiniPiece type={game.hold} />
@@ -894,10 +950,10 @@ export default function Home() {
 
           <section className="panel controls-panel">
             <div className="panel-heading"><span>Controls</span></div>
-            <div className="control-row"><span>Move</span><span><Keycap>←</Keycap><Keycap>→</Keycap></span></div>
-            <div className="control-row"><span>Soft drop</span><Keycap>↓</Keycap></div>
-            <div className="control-row"><span>Rotate</span><span><Keycap>Z</Keycap><Keycap>X</Keycap></span></div>
-            <div className="control-row"><span>Hard drop</span><Keycap>Space</Keycap></div>
+            <div className="control-row"><span>Move</span><span><Keycap>{displayCode(bindings.moveLeft)}</Keycap><Keycap>{displayCode(bindings.moveRight)}</Keycap></span></div>
+            <div className="control-row"><span>Soft drop</span><Keycap>{displayCode(bindings.softDrop)}</Keycap></div>
+            <div className="control-row"><span>Rotate</span><span><Keycap>{displayCode(bindings.rotateCounterClockwise)}</Keycap><Keycap>{displayCode(bindings.rotateClockwise)}</Keycap></span></div>
+            <div className="control-row"><span>Hard drop</span><Keycap>{displayCode(bindings.hardDrop)}</Keycap></div>
           </section>
         </aside>
 
@@ -922,11 +978,23 @@ export default function Home() {
               <span>Playfield / 10×20</span>
               <span>{game.status === "playing" ? "Live" : game.status}</span>
             </div>
-            <div className="board" role="group" aria-label={boardLabel}>
+            <div
+              className="board"
+              role="group"
+              aria-label={boardLabel}
+              data-status={game.status}
+              data-active={game.active?.type ?? ""}
+              data-active-x={game.active?.x ?? ""}
+              data-active-y={game.active?.y ?? ""}
+              data-rotation={game.active?.rotation ?? ""}
+              data-hold={game.hold ?? ""}
+              data-score={game.score}
+            >
               {cells.map((cell, index) => (
                 <span
                   aria-hidden="true"
                   className={`board-cell cell-${cell.mode}${cell.type ? ` piece-${cell.type}` : ""}`}
+                  data-piece={cell.type ?? undefined}
                   key={index}
                 />
               ))}
@@ -1046,16 +1114,39 @@ export default function Home() {
             </div>
             <p>Complete horizontal lines without letting the stack reach the top. Every ten lines increases the level and gravity.</p>
             <div className="help-grid">
-              <div><Keycap>←</Keycap><Keycap>→</Keycap><span>Move</span></div>
-              <div><Keycap>↓</Keycap><span>Soft drop</span></div>
-              <div><Keycap>↑</Keycap><Keycap>X</Keycap><span>Rotate right</span></div>
-              <div><Keycap>Z</Keycap><span>Rotate left</span></div>
-              <div><Keycap>Space</Keycap><span>Hard drop</span></div>
-              <div><Keycap>C</Keycap><Keycap>Shift</Keycap><span>Hold</span></div>
-              <div><Keycap>P</Keycap><Keycap>Esc</Keycap><span>Pause</span></div>
-              <div><Keycap>M</Keycap><span>Sound</span></div>
+              <div><Keycap>{displayCode(bindings.moveLeft)}</Keycap><Keycap>{displayCode(bindings.moveRight)}</Keycap><span>Move</span></div>
+              <div><Keycap>{displayCode(bindings.softDrop)}</Keycap><span>Soft drop</span></div>
+              <div><Keycap>{displayCode(bindings.rotateClockwise)}</Keycap><span>Rotate right</span></div>
+              <div><Keycap>{displayCode(bindings.rotateCounterClockwise)}</Keycap><span>Rotate left</span></div>
+              <div><Keycap>{displayCode(bindings.hardDrop)}</Keycap><span>Hard drop</span></div>
+              <div><Keycap>{displayCode(bindings.hold)}</Keycap><span>Hold</span></div>
+              <div><Keycap>{displayCode(bindings.pause)}</Keycap><Keycap>Esc</Keycap><span>Pause</span></div>
+              <div><Keycap>{displayCode(bindings.sound)}</Keycap><span>Sound</span></div>
             </div>
             <div className="scoring-note"><strong>Score smarter</strong><span>Hard drops earn 2 points per row. Consecutive clears build combos; back-to-back Tetrises earn 1.5×.</span></div>
+            <section className="binding-editor" aria-labelledby="binding-title">
+              <div className="setting-heading">
+                <div><strong id="binding-title">Keyboard controls</strong><span>Select an action, then press a new key.</span></div>
+                <button type="button" className="text-button" onClick={resetBindings}>Reset</button>
+              </div>
+              <div className="binding-list">
+                {CONTROL_ACTIONS.map((action) => (
+                  <button
+                    type="button"
+                    className={`binding-row${remappingAction === action ? " is-remapping" : ""}`}
+                    aria-pressed={remappingAction === action}
+                    key={action}
+                    onClick={() => {
+                      setRemappingAction(action);
+                      setAnnouncement(`Press a new key for ${CONTROL_LABELS[action]}`);
+                    }}
+                  >
+                    <span>{CONTROL_LABELS[action]}</span>
+                    <Keycap>{remappingAction === action ? "Press a key…" : displayCode(bindings[action])}</Keycap>
+                  </button>
+                ))}
+              </div>
+            </section>
             <button
               type="button"
               className="help-setting"
@@ -1064,6 +1155,18 @@ export default function Home() {
             >
               <span>Sound effects</span><strong>{soundOn ? "On" : "Off"}</strong>
             </button>
+            <div className="volume-setting">
+              <label htmlFor="effects-volume"><span>Effects volume</span><output>{Math.round(volume * 100)}%</output></label>
+              <input
+                id="effects-volume"
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                value={volume}
+                onChange={(event) => updateVolume(Number(event.currentTarget.value))}
+              />
+            </div>
             <button type="button" className="primary-button dialog-close" onClick={closeHelp}>Back to the board</button>
           </section>
         </div>
