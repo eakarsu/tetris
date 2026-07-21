@@ -56,3 +56,8 @@ Add CI and a small Playwright matrix around real keyboard/touch/focus behavior, 
 - Defined the v1.1.0 release boundary with MIT licensing, trademark/font attribution, supported browsers/devices, semantic versioning, privacy and monitoring limits, performance budgets, Cloudflare preview promotion, and rollback procedures.
 - Generated and inspected one 1200×630 Blockline social card, saved it as `public/og.png`, and added incoming-host-derived canonical, Open Graph, and Twitter metadata.
 - Verified a clean `npm ci`, `npm run check`, full Playwright matrix, high-severity production audit gate, and a production-server smoke test. npm reports two moderate PostCSS advisories nested in Next with no non-breaking remediation; no high-severity production advisory remains.
+
+## Runtime verification (2026-07-20)
+
+- Added a safe production `start.sh` that honors caller-assigned loopback host and port, requires installed dependencies and a prebuilt production bundle, and performs no build or mutation at startup.
+- This local game has no account or login surface. Its primary gameplay journey is covered by the recorded cross-browser Playwright matrix and production smoke evidence above.
