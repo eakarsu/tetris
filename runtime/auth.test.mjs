@@ -1,0 +1,2 @@
+import assert from 'node:assert/strict'; import { hashPassword,verifyPassword,issueToken,verifyToken } from './auth.mjs';
+process.env.JWT_SECRET='runtime-test-secret-with-more-than-32-characters';const hash=hashPassword('RuntimeAcceptance123!');assert.equal(verifyPassword('RuntimeAcceptance123!',hash),true);assert.equal(verifyPassword('wrong',hash),false);assert.equal(verifyToken(issueToken({id:'1',email:'a@b.test',role:'admin'})).sub,'1');console.log('Tetris runtime authentication checks passed');
