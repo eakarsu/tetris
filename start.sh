@@ -32,6 +32,7 @@ cleanup(){ kill "$api_pid" "$ui_pid" 2>/dev/null || true; wait "$api_pid" "$ui_p
 trap cleanup EXIT INT TERM
 for _ in {1..100}; do curl -fsS "http://${HOST}:${BACKEND_PORT}/api/health" >/dev/null 2>&1 && break; sleep 0.2; done
 curl -fsS "http://${HOST}:${BACKEND_PORT}/api/health" >/dev/null
+for _ in {1..100}; do curl -fsS "http://${HOST}:${FRONTEND_PORT}/" >/dev/null 2>&1 && break; sleep 0.2; done
 curl -fsS "http://${HOST}:${FRONTEND_PORT}/" >/dev/null
 echo "Tetris running: UI http://${HOST}:${FRONTEND_PORT}, API http://${HOST}:${BACKEND_PORT}"
 
