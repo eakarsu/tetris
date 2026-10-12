@@ -1,0 +1,3 @@
+import Link from 'next/link';
+export const dynamic='force-dynamic';
+export default function Page(){const port=Number(process.env.BACKEND_PORT),host=process.env.HOST||'127.0.0.1';const url=Number.isInteger(port)&&port>0&&port<65536?'http://'+host+':'+port+'/ai-workspace':null;return <main style={{maxWidth:900,margin:'auto',padding:32}}><Link href='/'>Back to Tetris</Link><h1>AI workspace</h1><p>Review a session using your existing native runtime account. The AI receives only your supplied description and never changes the game.</p>{url?<a href={url}>Open authenticated AI workspace</a>:<p>The native runtime API is not connected. Launch the configured start.sh to connect it.</p>}</main>;}

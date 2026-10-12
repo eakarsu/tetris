@@ -70,6 +70,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
+        <nav aria-label="Application navigation"><a href="/ai-workspace" style={{display:"inline-block",padding:"12px 20px"}}>AI workspace</a></nav>
         {children}
       </body>
     </html>
